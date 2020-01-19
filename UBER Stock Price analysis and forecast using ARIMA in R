@@ -1,0 +1,148 @@
+#Loading the essential libraries
+
+library(forecast)
+library(readxl)
+library(stargazer)
+library(fpp)
+library(fpp2)
+library(scales)
+library(quantmod)
+library(urca)
+library(vars)
+library(tseries)
+library(ggplot2)
+library(dplyr)
+library(AER)
+library(dynlm)
+library(tidyverse)
+library(lmtest)
+require(TTR)
+
+#UBER historic stock prices were extracted in a .csv file
+
+
+
+data_uber <- read.csv("./UBER.csv", header = TRUE, stringsAsFactors = T)
+data_uber$Date <- as.Date(data_uber$Date,"%Y-%m-%d")
+
+#Alternative way of directly extracting stock price data from Yahoo using quantmod package
+##uber.data <- getSymbols("UBER", src="yahoo", from="2019-01-01", verbose = TRUE, auto.assign = FALSE)
+
+dim(data_uber)
+
+
+#Plot of the time series
+ggplot(data_uber, aes(Date, Close)) + geom_line()  +
+  scale_x_date(date_labels = "%b-%Y") + xlab("") + ylab("Daily Closing price")
+
+
+#All observations except the last 20 are treated as "training set"
+train.df <- head(data_uber, n= -20 )
+
+#Close Price is the variable of interest
+df <- log(train.df$Close)
+
+fitlnprice <- auto.arima(df)
+fitlnprice
+
+#Plotting the time series, its ACF and PACF for model Identification and stationarity analysis
+plot(df, type = 'l')
+par(mfrow = c(1,3))
+plot.ts(df)
+acf(df, lag = 50)
+pacf(df)
+
+
+#Check stationarity of the data
+df %>% ur.kpss() %>% summary()
+
+#Test statistic higher than the critical values at all confidence levels
+#Null hypothesis that series is stationary is rejected
+
+#Other tests
+#adf test
+adf.test(df, k = 4)
+
+#p-value greater that 0.05. Null hypothesis that series non-stationary cannot be rejected
+
+trend_test = ur.df(df , type = "trend", lags = 4)
+summary(trend_test)
+
+drift_test = ur.df(df , type = "drift", lags = 4)
+summary(drift_test)
+
+none_test = ur.df(df , type = "none", lags = 3)
+summary(none_test)
+
+
+#Apply the difference and see
+df %>% diff() %>% ur.df() %>% summary()
+ndiffs(df)
+
+diff_df <- df %>% diff(differences = 1)
+
+#Plot of the differenced time series, it's ACF and PACF
+plot.ts(diff_df)
+acf(diff_df)
+pacf(diff_df, lag.max = 50)
+
+
+auto.arima(df)
+
+#PACF getting cut off at lag 1. ACF exponentially characteristics in 
+#the initial time series
+#Assume AR(0,1,0)
+fit110 <- Arima(df, order=c(1,1,0), include.constant = T)
+fit110
+#AICc=-579.93   BIC=-571.26
+
+coeftest(fit110)
+checkresiduals(fit110)
+acf(fit110$residuals)
+pacf(fit110$residuals)
+Box.test(resid(fit110), lag = 10, type = "Ljung-Box", fitdf = 1)
+
+#Checking ARIMA(0, 1, 0) Random walk
+fit010 <- Arima(df, order=c(0,1,0), include.constant = T)
+fit010
+#AICc=-581.89   BIC=-576.08
+
+coeftest(fit010)
+checkresiduals(fit010)
+acf(fit010$residuals)
+pacf(fit010$residuals)
+Box.test(resid(fit010), lag = 10, type = "Ljung-Box", fitdf = 1)
+
+
+#Forecast the next 20 observations
+autoplot(forecast(fit110, h = 20))
+fcast <- forecast(fit010, h = 20)
+fcast
+
+plot(fit010$x, type = 'l', col = 'blue' )
+lines(fitted(fit010),col="red")
+plot(fcast)
+fcast_values = data.frame(exp(fcast$mean))
+fcast_values
+dim(fcast_values)
+
+#Accuracy check
+head(data_uber)
+test.df <- tail(data_uber, n = 20) %>% select(Close)
+head(test.df)
+
+check <- cbind(fcast_values, test.df)
+colnames(check) = c("Forecasted values", "Actual values")
+View(check)
+
+
+#Percentage of Error
+pc.error = mean((check$`Actual values` - check$`Forecasted values`)/check$`Actual values`)
+pc.error
+
+# Create a plot of the two return series - Actual versus Forecasted
+plot(test.df$Close, type='l',main='Actual Returns Vs Forecasted Returns', ylab = 'Close Price' )
+
+
+lines(fcast_values,lwd=1.5,col='red')
+legend('bottomright',c("Actual","Forecasted"),lty=c(1,1),lwd=c(1.5,1.5),col=c('black','red'))
